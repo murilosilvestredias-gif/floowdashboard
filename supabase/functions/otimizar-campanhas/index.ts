@@ -1,4 +1,4 @@
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+﻿const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const META_BASE = "https://graph.facebook.com/v18.0";
 
@@ -17,6 +17,7 @@ const dbH = {
 const LEAD_ACTIONS = ["lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"];
 const PAGE_LIMIT = "500";
 const MAX_BUDGET_CHANGE_PCT = 0.20;
+const BUDGET_ACTION_THROTTLE_MS = 6 * 60 * 60 * 1000;
 
 type InsightNode = {
   id: string;
@@ -261,11 +262,19 @@ function getFunnelConfig(org: any) {
   const cfg = org?.status_config?.statuses?.length ? org.status_config : fallback;
   const statuses = [...(cfg.statuses || fallback.statuses)].sort((a: any, b: any) => n(a.ordem) - n(b.ordem));
   const convertido = Number(cfg.convertido_status || fallback.convertido_status);
-  const idx = statuses.findIndex((s: any) => Number(s.id) === convertido);
-  const pre = idx > 0 ? statuses[idx - 1] : null;
+  const isNegative = (label?: string | null) => {
+    const value = normalize(label);
+    return ["reprovado", "sem retorno", "perdido", "cancelado", "descartado", "desqualificado", "recusado"].some((term) => value.includes(term));
+  };
+  const semanticTerms = ["contrato", "cadastro", "proposta", "app", "qualificado", "documentos", "analise", "reuniao"];
+  const explicitPre = org?.ravena_pre_conversion_status != null ? statuses.find((st: any) => Number(st.id) === Number(org.ravena_pre_conversion_status)) : null;
+  const semanticPre = statuses.find((st: any) => Number(st.id) !== convertido && !isNegative(st.label) && semanticTerms.some((term) => normalize(st.label).includes(term)));
+  const idx = statuses.findIndex((st: any) => Number(st.id) === convertido);
+  const orderedPre = idx > 0 ? [...statuses.slice(0, idx)].reverse().find((st: any) => !isNegative(st.label)) : null;
+  const pre = explicitPre && !isNegative(explicitPre.label) ? explicitPre : semanticPre || orderedPre || null;
   return {
     convertidoStatus: convertido,
-    convertidoLabel: statuses.find((s: any) => Number(s.id) === convertido)?.label || "Convertido",
+    convertidoLabel: statuses.find((st: any) => Number(st.id) === convertido)?.label || "Convertido",
     preStatus: pre ? Number(pre.id) : null,
     preStatusLabel: pre?.label || "Potencial",
   };
@@ -568,7 +577,7 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
   for (const camp of campaigns.filter((c) => c.status === "ACTIVE")) {
     const label = shortName(camp.name);
 
-    // CBO: budget at campaign level. ABO: budget split across adsets — sum active adsets as effective budget.
+    // CBO: budget at campaign level. ABO: budget split across adsets â€” sum active adsets as effective budget.
     const campBudget = camp.daily_budget || 0;
     const adsetDailySum = camp.adsets
       .filter(a => a.status === "ACTIVE")
@@ -583,7 +592,7 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
     const semRevs = camp.crm_revs === 0 && enoughSpend;
     const semPipeline = semRevs && !temPipeline;
 
-    // Either CPR or CPL excellent is enough to qualify for scale — CPR winning overrides slightly bad CPL.
+    // Either CPR or CPL excellent is enough to qualify for scale â€” CPR winning overrides slightly bad CPL.
     const boaCpr = camp.crm_revs > 0 && avgCpr > 0 && camp.cpr > 0 && camp.cpr <= avgCpr * 0.8;
     const boaCpl = camp.crm_revs > 0 && avgCpl > 0 && camp.cpl > 0 && camp.cpl <= avgCpl * 0.8;
     const custoHistoricoOk = cprHistorico <= 0 || camp.cpr <= cprHistorico * 1.30;
@@ -592,13 +601,13 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
     const boa = (boaCpr || boaCpl) && podeEscalar;
 
     let decisao = "manter";
-    let porque = `${label} está dentro do esperado.`;
+    let porque = `${label} estÃ¡ dentro do esperado.`;
     let proximo = "Continuar acompanhando por mais 24 horas.";
 
     if (semPipeline && cplRuim) {
       decisao = "pausar";
-      porque = `${label} gastou ${brl(camp.spend)} e ainda não trouxe aprovadas.`;
-      proximo = "Pausar e revisar público e criativo antes de voltar.";
+      porque = `${label} gastou ${brl(camp.spend)} e ainda nÃ£o trouxe aprovadas.`;
+      proximo = "Pausar e revisar pÃºblico e criativo antes de voltar.";
       sugestoes.push({
         tipo: "pausar_campanha",
         id: camp.id,
@@ -619,7 +628,7 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
       const novoBase = Math.round(budget * (1 + aumento));
       if (novoBase > budget) {
         decisao = "escalar";
-        porque = `${label} está trazendo aprovadas com custo bom.`;
+        porque = `${label} estÃ¡ trazendo aprovadas com custo bom.`;
         if (isAbo) {
           const bestAdset = [...camp.adsets]
             .filter(a => a.status === "ACTIVE" && (a.daily_budget || 0) > 0)
@@ -661,8 +670,8 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
       // Flag for optimization regardless of budget type; auto-execute only when budget is adjustable.
       decisao = "otimizar";
       porque = camp.tendencia === "piorando"
-        ? `${label} está piorando e já merece cortar verba antes de estourar.`
-        : `${label} está cara para o resultado que entregou.`;
+        ? `${label} estÃ¡ piorando e jÃ¡ merece cortar verba antes de estourar.`
+        : `${label} estÃ¡ cara para o resultado que entregou.`;
       if (budget > 0) {
         if (isAbo) {
           const worstAdset = [...camp.adsets]
@@ -685,10 +694,10 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
                 automatico: true,
               });
             } else {
-              proximo = "Revisar adsets — nenhum elegível para redução automática.";
+              proximo = "Revisar adsets â€” nenhum elegÃ­vel para reduÃ§Ã£o automÃ¡tica.";
             }
           } else {
-            proximo = "Revisar adsets manualmente — sem budget ajustável detectado.";
+            proximo = "Revisar adsets manualmente â€” sem budget ajustÃ¡vel detectado.";
           }
         } else {
           const novo = Math.max(10, Math.round(campBudget * (1 - reducao)));
@@ -708,7 +717,7 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
           }
         }
       } else {
-        proximo = "Revisar configuração — campanha sem budget ajustável identificado.";
+        proximo = "Revisar configuraÃ§Ã£o â€” campanha sem budget ajustÃ¡vel identificado.";
       }
     }
 
@@ -736,7 +745,7 @@ function buildSuggestions(campaigns: CampaignNode[], avgCpl: number, avgCpr: num
         potenciais: adset.crm_potentials,
         revendedoras: adset.crm_revs,
         benchmark_cpl: round(avgCpl),
-        motivo: `${adset.name} gastou ${brl(adset.spend)}, trouxe ${adset.leads_api} lead${adset.leads_api !== 1 ? "s" : ""} com CPL de ${brl(adset.cpl || 0)}, não tem ${preStatusLabel} e não aprovou ninguém. A média da conta está perto de ${brl(avgCpl || 0)} por lead.`,
+        motivo: `${adset.name} gastou ${brl(adset.spend)}, trouxe ${adset.leads_api} lead${adset.leads_api !== 1 ? "s" : ""} com CPL de ${brl(adset.cpl || 0)}, nÃ£o tem ${preStatusLabel} e nÃ£o aprovou ninguÃ©m. A mÃ©dia da conta estÃ¡ perto de ${brl(avgCpl || 0)} por lead.`,
       });
     }
 
@@ -783,20 +792,20 @@ function bestMaster(campaigns: CampaignNode[], avgCpr: number) {
   })[0]?.ad || null;
   const budget = base.daily_budget > 0 ? Math.max(30, Math.round(base.daily_budget * 0.6)) : 50;
   return {
-    titulo: "Sugestão de campanha",
+    titulo: "SugestÃ£o de campanha",
     campanha_base: base.name,
     campanha_base_id: base.id,
-    publico: bestAdset?.name || "Melhor público da campanha vencedora",
+    publico: bestAdset?.name || "Melhor pÃºblico da campanha vencedora",
     publico_id: bestAdset?.id || null,
     criativo: bestAd?.name || "Melhor criativo ativo",
     criativo_id: bestAd?.id || null,
     thumbnail_url: bestAd?.thumbnail_url || null,
     budget_diario_sugerido: budget,
-    motivo: cleanText(`Juntar o que já provou funcionar: ${shortName(base.name)}, público ${bestAdset?.name || "vencedor"} e criativo ${bestAd?.name || "vencedor"}.`),
+    motivo: cleanText(`Juntar o que jÃ¡ provou funcionar: ${shortName(base.name)}, pÃºblico ${bestAdset?.name || "vencedor"} e criativo ${bestAd?.name || "vencedor"}.`),
     instrucoes: [
       `Criar uma campanha nova com ${brl(budget)}/dia.`,
-      `Usar o público "${bestAdset?.name || "vencedor"}".`,
-      `Começar com o criativo "${bestAd?.name || "vencedor"}".`,
+      `Usar o pÃºblico "${bestAdset?.name || "vencedor"}".`,
+      `ComeÃ§ar com o criativo "${bestAd?.name || "vencedor"}".`,
       "Deixar a campanha rodar 48 horas antes de escalar.",
     ],
   };
@@ -820,7 +829,7 @@ function collectMetaAlerts(campaigns: CampaignNode[]) {
       motivo: effective === "DISAPPROVED"
         ? "Reprovado pela Meta."
         : effective === "PENDING_REVIEW" || effective === "IN_PROCESS"
-          ? "Em análise pela Meta."
+          ? "Em anÃ¡lise pela Meta."
           : effective === "WITH_ISSUES"
             ? "Com problema de entrega na Meta."
             : effective === "CAMPAIGN_PAUSED"
@@ -860,6 +869,29 @@ function isBudgetAction(acao: any) {
   return tipo.includes("budget") && (tipo.includes("aumentar") || tipo.includes("reduzir"));
 }
 
+function canAutoExecute(acao: any) {
+  return acao?.automatico === true && isBudgetAction(acao);
+}
+
+function actionKey(acao: any) {
+  const tipo = String(acao?.tipo || "").toLowerCase();
+  const direction = tipo.includes("aumentar") ? "up" : tipo.includes("reduzir") ? "down" : tipo;
+  return String(acao?.id || "sem-id") + ":" + direction;
+}
+
+async function getBudgetThrottle(orgId: string) {
+  const res = await rest("ai_optimization_logs?select=created_at,acoes_executadas&org_id=eq." + orgId + "&order=created_at.desc&limit=50");
+  const logs = await res.json();
+  if (!Array.isArray(logs)) return { bloqueado: false, ultimo_ajuste_em: null };
+  const cutoff = Date.now() - BUDGET_ACTION_THROTTLE_MS;
+  const recente = logs.find((log: any) => {
+    const ts = new Date(log.created_at).getTime();
+    if (!Number.isFinite(ts) || ts < cutoff) return false;
+    return (log.acoes_executadas || []).some((acao: any) => acao?.ok !== false && isBudgetAction(acao));
+  });
+  return { bloqueado: !!recente, ultimo_ajuste_em: recente?.created_at || null };
+}
+
 async function executeBudgetAction(acao: any, token: string) {
   const tipo = String(acao?.tipo || "").toLowerCase();
   const atual = Number(acao?.antigo_budget || 0);
@@ -892,26 +924,35 @@ async function executeBudgetAction(acao: any, token: string) {
   }
 }
 
-async function executeAutomaticBudgetActions(sugestoes: any[], token: string) {
+async function executeAutomaticBudgetActions(sugestoes: any[], token: string, bloqueado: boolean) {
   const executadas: any[] = [];
   const pendentes: any[] = [];
-
+  const vistos = new Set<string>();
   for (const acao of sugestoes) {
-    if (acao?.automatico === true && isBudgetAction(acao)) {
-      executadas.push(await executeBudgetAction(acao, token));
-    } else {
+    if (!canAutoExecute(acao)) {
       pendentes.push(acao);
+      continue;
     }
+    const key = actionKey(acao);
+    if (vistos.has(key)) {
+      pendentes.push({ ...acao, automatico: false, motivo_bloqueio_auto: "Acao duplicada na mesma analise; mantive apenas a primeira." });
+      continue;
+    }
+    vistos.add(key);
+    if (bloqueado) {
+      pendentes.push({ ...acao, automatico: false, motivo_bloqueio_auto: "Bloqueado pelo intervalo de seguranca ou modo observacao." });
+      continue;
+    }
+    executadas.push(await executeBudgetAction(acao, token));
   }
-
   return { executadas, pendentes };
 }
 
 async function analisarOrg(orgId: string) {
-  const orgRes = await rest(`organizations?select=meta_token,meta_account_id,ravena_ativa,ravena_modo,ravena_meta_revendedoras,modelo_negocio,status_config&id=eq.${orgId}&limit=1`);
+  const orgRes = await rest(`organizations?select=meta_token,meta_account_id,ravena_ativa,ravena_modo,ravena_meta_revendedoras,ravena_pre_conversion_status,modelo_negocio,status_config&id=eq.${orgId}&limit=1`);
   const [org] = await orgRes.json();
   if (!org?.ravena_ativa || !org.meta_token || !org.meta_account_id) {
-    return { skip: true, motivo: "Ravena não ativa ou sem token configurado" };
+    return { skip: true, motivo: "Ravena nÃ£o ativa ou sem token configurado" };
   }
 
   const token = org.meta_token;
@@ -919,6 +960,9 @@ async function analisarOrg(orgId: string) {
   const modo = org.ravena_modo || "equilibrado";
   const metaRevs = Number(org.ravena_meta_revendedoras) || 0;
   const funil = getFunnelConfig(org);
+  const modoObsAtivo = normalize(modo).includes("observ");
+  const throttle = await getBudgetThrottle(orgId);
+  const bloquearAutomatico = modoObsAtivo || throttle.bloqueado;
   const start7 = startOfBRTodayMinus(6);
   const end = endOfBRToday();
   const startMonth = startOfBRMonth();
@@ -937,13 +981,13 @@ async function analisarOrg(orgId: string) {
         status: "erro",
         acoes_sugeridas: [],
         acoes_executadas: [],
-        decisao_principal: "A Ravena não conseguiu ler a conta Meta Ads",
-        frase_do_dia: "Erro na sincronização com Meta Ads",
+        decisao_principal: "A Ravena nÃ£o conseguiu ler a conta Meta Ads",
+        frase_do_dia: "Erro na sincronizaÃ§Ã£o com Meta Ads",
         resumo: "Sem dados recebidos da Meta.",
         insights: [],
         analise_campanhas: [],
         insight_do_dia: null,
-        alerta: `Verifique a integração com a Meta. ${String(err).slice(0, 120)}`,
+        alerta: `Verifique a integraÃ§Ã£o com a Meta. ${String(err).slice(0, 120)}`,
         meta_alertas: [{
           tipo: "integracao",
           nome: "Meta Ads",
@@ -1019,65 +1063,6 @@ async function analisarOrg(orgId: string) {
   const ritmoMensal = Math.round((totalGasto / diasDecorridos) * diasNoMes);
   const ritmoRevs = Math.round((revsMes / diasDecorridos) * diasNoMes);
 
-  // When significantly behind on monthly goal, force scale the best campaign(s).
-  if (custoGlobalEstourado === false && metaRevs > 0 && diasDecorridos >= 7 && ritmoRevs < metaRevs * 0.80) {
-    const urgente = ritmoRevs < metaRevs * 0.60;
-    const fatorUrgencia = MAX_BUDGET_CHANGE_PCT;
-    const jaEscalando = new Set(analise.filter((a: any) => a.decisao === "escalar").map((a: any) => a.campanha_id));
-    const candidatos = [...campaigns]
-      .filter(c => c.status === "ACTIVE" && !jaEscalando.has(c.id))
-      .sort((a, b) => scoreCampaign(b, cplMedio, avgCpr) - scoreCampaign(a, cplMedio, avgCpr));
-    for (const camp of candidatos.slice(0, urgente ? 2 : 1)) {
-      const campBudget = camp.daily_budget || 0;
-      const bestAdset = [...camp.adsets]
-        .filter(a => a.status === "ACTIVE" && (a.daily_budget || 0) > 0)
-        .sort((a, b) => (b.crm_revs * 30 + b.leads_api * 4) - (a.crm_revs * 30 + a.leads_api * 4))[0];
-      const label = shortName(camp.name);
-      const motivo = `${label} tem o melhor resultado e a meta mensal está em risco (projeção: ${ritmoRevs} vs meta ${metaRevs}).`;
-      const proximoUrgente = urgente
-        ? `Escalar agora — faltam ${diasRestantes} dias para bater ${metaRevs} aprovadas.`
-        : `Aumentar budget e monitorar ritmo diário de aprovações.`;
-      if (campBudget > 0) {
-        const novo = Math.round(campBudget * (1 + fatorUrgencia));
-        sugestoes.push({
-          tipo: "aumentar_budget_campanha",
-          id: camp.id,
-          nome: camp.name,
-          campanha_nome: camp.name,
-          direcao: "aumento",
-          antigo_budget: campBudget,
-          novo_budget: novo,
-          motivo,
-          automatico: true,
-        });
-      } else if (bestAdset) {
-        const adsetBudget = bestAdset.daily_budget;
-        const novoAdset = Math.round(adsetBudget * (1 + fatorUrgencia));
-        sugestoes.push({
-          tipo: "aumentar_budget_conjunto",
-          id: bestAdset.id,
-          nome: bestAdset.name,
-          conjunto_nome: bestAdset.name,
-          campanha_nome: camp.name,
-          direcao: "aumento",
-          antigo_budget: adsetBudget,
-          novo_budget: novoAdset,
-          motivo,
-          automatico: true,
-        });
-      } else {
-        continue;
-      }
-      const idx = analise.findIndex((a: any) => a.campanha_id === camp.id);
-      if (idx >= 0 && analise[idx].decisao === "manter") {
-        analise[idx].decisao = "escalar";
-        analise[idx].porque = motivo;
-        analise[idx].proximo_passo = proximoUrgente;
-      }
-    }
-  }
-
-
   const piorCriativo = [...analise].filter((a: any) => a.gasto >= 50).sort((a: any, b: any) => (b.cpr || 0) - (a.cpr || 0))[0];
   if (custoGlobalPressionado) {
     if (piorCriativo) {
@@ -1091,7 +1076,7 @@ async function analisarOrg(orgId: string) {
       });
     }
   }
-  const { executadas: acoesAutomaticas, pendentes: sugestoesPendentes } = await executeAutomaticBudgetActions(sugestoes, token);
+  const { executadas: acoesAutomaticas, pendentes: sugestoesPendentes } = await executeAutomaticBudgetActions(sugestoes, token, bloquearAutomatico);
   sugestoes = sugestoesPendentes;
 
   const melhor = [...analise].sort((a, b) => b.score - a.score)[0];
@@ -1099,9 +1084,9 @@ async function analisarOrg(orgId: string) {
   const alerta = metaAlertas.length > 0
     ? `A Meta marcou ${metaAlertas.length} item${metaAlertas.length !== 1 ? "s" : ""} com problema. ${metaAlertas[0].nome}: ${metaAlertas[0].motivo}`
     : metaRevs > 0 && diasDecorridos >= 7 && ritmoRevs < metaRevs * 0.75
-      ? `No ritmo atual, a conta projeta ${ritmoRevs} aprovadas no mês. A meta é ${metaRevs}.`
+      ? `No ritmo atual, a conta projeta ${ritmoRevs} aprovadas no mÃªs. A meta Ã© ${metaRevs}.`
       : piorando.length > 0
-        ? `${piorando[0].campanha_curta} está piorando. Melhor reduzir verba antes de queimar mais orçamento.`
+        ? `${piorando[0].campanha_curta} estÃ¡ piorando. Melhor reduzir verba antes de queimar mais orÃ§amento.`
         : null;
 
   const piorCampanha = [...analise].filter((a) => a.gasto > 0).sort((a, b) => (b.cpr || 9999) - (a.cpr || 9999))[0];
@@ -1112,9 +1097,9 @@ async function analisarOrg(orgId: string) {
     : "Ainda faltam conversoes de trafego suficientes para comparar custo atual contra mes anterior com seguranca.";
 
   const insightDia = campanhaMestre
-    ? `A melhor combinação hoje é usar ${shortName(campanhaMestre.campanha_base)}, público ${campanhaMestre.publico} e criativo ${campanhaMestre.criativo}. Isso pode virar uma sugestão de campanha com orçamento inicial de ${brl(campanhaMestre.budget_diario_sugerido)}/dia.`
+    ? `A melhor combinaÃ§Ã£o hoje Ã© usar ${shortName(campanhaMestre.campanha_base)}, pÃºblico ${campanhaMestre.publico} e criativo ${campanhaMestre.criativo}. Isso pode virar uma sugestÃ£o de campanha com orÃ§amento inicial de ${brl(campanhaMestre.budget_diario_sugerido)}/dia.`
     : melhor
-      ? `${melhor.campanha_curta} é a campanha mais forte hoje. Ela trouxe ${melhor.revendedoras} aprovadas com custo de ${brl(melhor.cpr || 0)} por aprovada.`
+      ? `${melhor.campanha_curta} Ã© a campanha mais forte hoje. Ela trouxe ${melhor.revendedoras} aprovadas com custo de ${brl(melhor.cpr || 0)} por aprovada.`
       : "A Ravena analisou as campanhas, mas ainda precisa de mais dados para apontar uma vencedora clara.";
 
   const insightDiaFinal = `${diagnosticoCpr} ${insightDia}`;
@@ -1136,9 +1121,9 @@ async function analisarOrg(orgId: string) {
       acoes_sugeridas: sugestoes,
       acoes_executadas: acoesAutomaticas,
       decisao_principal: decisao,
-      frase_do_dia: recomendacoesPendentes > 0 ? "A Ravena encontrou ajustes para proteger seu orçamento." : "Campanhas estáveis hoje.",
-      resumo: `${Math.max(totalLeadsApi, totalLeadsCrm)} leads, ${revsTotal} aprovadas e custo médio de ${brl(avgCpr || cplMedio)}.`,
-      resumo_contextual: `${Math.max(totalLeadsApi, totalLeadsCrm)} leads, ${revsTotal} ${funil.convertidoLabel} e CPR médio de ${brl(avgCpr || cplMedio)} nos últimos 7 dias.`,
+      frase_do_dia: recomendacoesPendentes > 0 ? "A Ravena encontrou ajustes para proteger seu orÃ§amento." : "Campanhas estÃ¡veis hoje.",
+      resumo: `${Math.max(totalLeadsApi, totalLeadsCrm)} leads, ${revsTotal} aprovadas e custo mÃ©dio de ${brl(avgCpr || cplMedio)}.`,
+      resumo_contextual: `${Math.max(totalLeadsApi, totalLeadsCrm)} leads, ${revsTotal} ${funil.convertidoLabel} e CPR mÃ©dio de ${brl(avgCpr || cplMedio)} nos Ãºltimos 7 dias.`,
       insights: analise.slice(0, 10),
       analise_campanhas: analise.slice(0, 10),
       insight_do_dia: insightDiaFinal,
@@ -1158,6 +1143,9 @@ async function analisarOrg(orgId: string) {
       ritmo_mensal: ritmoMensal,
       revendedoras_mes: revsMes,
       dias_restantes: diasRestantes,
+      throttle_ativo: bloquearAutomatico,
+      modo_observacao: modoObsAtivo,
+      motivo_bloqueio: bloquearAutomatico ? "Bloqueado pelo intervalo de seguranca ou modo observacao." : null,
       funil_analisado: {
         convertido_status: funil.convertidoStatus,
         convertido_label: funil.convertidoLabel,
@@ -1237,4 +1225,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: false, erro: String(err) }), { status: 500, headers: CORS });
   }
 });
+
+
 
