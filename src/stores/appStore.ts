@@ -29,6 +29,7 @@ export interface Lead {
   wa_sent?: boolean;
   observacoes?: string;
   created_at?: string;
+  entrada_at?: string;
   updated_at?: string;
   user_id?: string;
   utm_source?: string;

@@ -66,7 +66,9 @@ export function useOrgId() {
       .from('memberships')
       .select('org_id')
       .eq('user_id', user.id)
-      .single()
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
       .then(({ data }) => {
         const id = data?.org_id || null;
         orgIdCache[user.id] = id; // salva no cache

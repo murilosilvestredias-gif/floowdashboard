@@ -60,18 +60,31 @@ function parseLeadDate(str?: string | null): Date {
   if (!str) return new Date(0);
   if (str.includes('T')) {
     const cleaned = str.replace(/(\.\d{3})\d+/, '$1');
-    return new Date(cleaned);
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) return d;
   }
   if (/^\d{4}-\d{2}-\d{2} /.test(str)) {
     const cleaned = str.replace(' ', 'T').replace('+00:00', 'Z').replace('+00', 'Z').replace(/(\.\d{3})\d+/, '$1');
-    return new Date(cleaned);
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) return d;
   }
-  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*(\d{2})?:?(\d{2})?/);
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(\d{2})?:?(\d{2})?:?(\d{2})?/);
   if (m) {
-    const [, d, mo, y, h = '0', mi = '0'] = m;
-    return new Date(`${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}T${h.padStart(2,'0')}:${mi.padStart(2,'0')}:00-03:00`);
+    const [, d, mo, yStr, h = '0', mi = '0', s = '0'] = m;
+    let y = parseInt(yStr);
+    if (yStr.length === 2) {
+      y = y + (y < 70 ? 2000 : 1900);
+    }
+    const dObj = new Date(`${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}T${h.padStart(2,'0')}:${mi.padStart(2,'0')}:${s.padStart(2,'0')}-03:00`);
+    if (!isNaN(dObj.getTime())) return dObj;
   }
-  return new Date(str.replace(/(\.\d{3})\d+/, '$1'));
+  const dFallback = new Date(str.replace(/(\.\d{3})\d+/, '$1'));
+  return isNaN(dFallback.getTime()) ? new Date(0) : dFallback;
+}
+
+function getLeadEntryValue(lead: Lead): string | null | undefined {
+  const normalized = lead.entrada_at;
+  return typeof normalized === 'string' && normalized ? normalized : lead.created_at;
 }
 
 function leadDateBR(str?: string | null): string {
@@ -135,7 +148,7 @@ function subDays(dateStr: string, n: number): string {
 function filterByPeriod(leads: Lead[], period: string, customFrom?: string, customTo?: string, getRef?: (l: Lead) => string | null | undefined): Lead[] {
   if (period === 'all') return leads;
   const today = todayBR();
-  const dateRef = getRef ?? ((l: Lead) => l.created_at);
+  const dateRef = getRef ?? getLeadEntryValue;
   const ok = (l: Lead, from: string, to: string) => {
     const d = leadDateBR(dateRef(l));
     return !!d && d >= from && d <= to;
@@ -1150,8 +1163,9 @@ function LeadsPage() {
       const to = Math.min(from + PAGE_SIZE - 1, total - 1);
       const { data } = await supabase
         .from('leads')
-        .select(`id, nome, whatsapp, cidade, status, created_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
-        .order('created_at', { ascending: false })
+        .select(`id, nome, whatsapp, cidade, status, created_at, entrada_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
+        .order('entrada_at', { ascending: false, nullsFirst: false })
+        .order('id', { ascending: false })
         .eq('org_id', orgId)
         .range(from, to);
       if (bgCancelRef.current !== gen) break;
@@ -1199,7 +1213,7 @@ function LeadsPage() {
     if (deepFilter) {
       let query = supabase
         .from('leads')
-        .select(`id, nome, whatsapp, cidade, status, created_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
+        .select(`id, nome, whatsapp, cidade, status, created_at, entrada_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
         .eq('org_id', orgId);
       
       if (deepFilter.showRevs) {
@@ -1210,7 +1224,10 @@ function LeadsPage() {
         query = query.ilike('utm_campaign', `%${deepFilter.campaignId}%`);
       }
       
-      const { data: prioritized } = await query.limit(200);
+      const { data: prioritized } = await query
+        .order('entrada_at', { ascending: false, nullsFirst: false })
+        .order('id', { ascending: false })
+        .limit(200);
       if (prioritized?.length) {
         initialData = prioritized;
       }
@@ -1218,8 +1235,9 @@ function LeadsPage() {
 
     const { data, error } = await supabase
       .from('leads')
-      .select(`id, nome, whatsapp, cidade, status, created_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
-      .order('created_at', { ascending: false })
+      .select(`id, nome, whatsapp, cidade, status, created_at, entrada_at, utm_source, utm_campaign, utm_medium, utm_content, score, faixa, observacoes, motivo_reprovacao, ultimo_status_change, status_aprovado_at, status_reuniao_at, status_contrato_at, status_atendimento_at, status_sem_retorno_at, org_id, wa_sent, avaliado, instagram, lead_tags(tag_id, tags(id, nome, cor))`)
+      .order('entrada_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
       .eq('org_id', orgId)
       .range(0, INITIAL_SIZE - 1);
 
@@ -1390,11 +1408,12 @@ function LeadsPage() {
   const activeMoveStatus = useMemo(() => {
     if (statusFilter !== 'all' && statusFilter !== 'novo') return parseInt(statusFilter);
     if (campDeepFilter?.showRevs) return 3;
-    return statusConfig.entrada_status || 1;
-  }, [statusFilter, campDeepFilter, statusConfig.entrada_status]);
+    return null;
+  }, [statusFilter, campDeepFilter]);
 
   const getLeadMoveDateForView = useCallback((lead: Lead) => {
-    return activeMoveStatus ? getStatusMoveDate(lead, activeMoveStatus) : getStatusMoveDate(lead);
+    if (!activeMoveStatus) return getLeadEntryValue(lead);
+    return getStatusMoveDate(lead, activeMoveStatus) || getLeadEntryValue(lead);
   }, [activeMoveStatus]);
 
   // ── Filtered leads (all active filters, AND logic) ────────────────────────
@@ -1404,9 +1423,9 @@ function LeadsPage() {
     // Escolhe a data de referência para o filtro de período baseado no status selecionado:
     // cada status tem seu próprio timestamp de quando o lead foi movido para aquele status.
     const getRef = (l: Lead): string | null | undefined => {
-      if (statusFilter === 'all' && !campDeepFilter) return l.created_at;
-      const statusDate = getStatusMoveDate(l, activeMoveStatus);
-      return statusDate || l.created_at;
+      if (statusFilter === 'all' && !campDeepFilter) return getLeadEntryValue(l);
+      const statusDate = activeMoveStatus ? getStatusMoveDate(l, activeMoveStatus) : null;
+      return statusDate || getLeadEntryValue(l);
     };
 
     r = filterByPeriod(r, periodFilter, customFrom, customTo, getRef);
@@ -1537,15 +1556,21 @@ function LeadsPage() {
         return lt ? lt.some(t => selectedTagIds.has(t.id)) : false;
       });
     }
-    if (sortByScore) {
-      r = [...r].sort((a, b) => { const sa = (a as any).score ?? -1; const sb = (b as any).score ?? -1; return sortByScore === 'desc' ? sb - sa : sa - sb; });
-    } else {
-      r = [...r].sort((a, b) => {
-        const da = parseLeadDate(a.created_at).getTime();
-        const db = parseLeadDate(b.created_at).getTime();
-        return sortByDate === 'desc' ? db - da : da - db;
-      });
-    }
+    r = [...r].sort((a, b) => {
+      if (sortByScore) {
+        const sa = a.score ?? -1;
+        const sb = b.score ?? -1;
+        const scoreDiff = sortByScore === 'desc' ? sb - sa : sa - sb;
+        if (scoreDiff !== 0) return scoreDiff;
+      }
+
+      const da = parseLeadDate(getLeadMoveDateForView(a)).getTime();
+      const db = parseLeadDate(getLeadMoveDateForView(b)).getTime();
+      const dateDiff = sortByScore || sortByDate === 'desc' ? db - da : da - db;
+      if (dateDiff !== 0) return dateDiff;
+
+      return String(b.id).localeCompare(String(a.id), 'pt-BR', { numeric: true });
+    });
     return r;
   }, [allLeads, periodFilter, statusFilter, search, selectedCampaigns, campDeepFilter, customFrom, customTo, sortByScore, sortByDate, selectedTagIds, leadTagsMap, activeMoveStatus, getLeadMoveDateForView]);
 
@@ -1553,7 +1578,7 @@ function LeadsPage() {
     setCurrentPage(1);
     setSelectedIds(new Set());
     setAllSystemSelected(false);
-  }, [periodFilter, statusFilter, search, selectedCampaigns, campDeepFilter, selectedTagIds]);
+  }, [periodFilter, statusFilter, search, selectedCampaigns, campDeepFilter, selectedTagIds, sortByScore, sortByDate]);
 
   // Lock body scroll when any filter dropdown is open
   useEffect(() => {
@@ -1565,7 +1590,7 @@ function LeadsPage() {
   const leadsNoMes = useMemo(() => {
     const start = new Date();
     start.setDate(1); start.setHours(0, 0, 0, 0);
-    return allLeads.filter(l => parseLeadDate(l.created_at) >= start).length;
+    return allLeads.filter(l => parseLeadDate(getLeadEntryValue(l)) >= start).length;
   }, [allLeads]);
   const PLANO_LABELS_LEAD: Record<string, string> = { gratuito: 'Gratuito', starter: 'Starter', pro: 'Pro', enterprise: 'Enterprise' };
   const limiteLeads = features.limiteLeads;
@@ -2301,8 +2326,8 @@ function LeadsPage() {
                   </th>
                   <th className={`text-left px-3 py-3 text-xs font-semibold uppercase tracking-wider ${muted}`}>Nome</th>
                   <th className={`text-left px-3 py-3`} style={{ whiteSpace:'nowrap' }}>
-                    <button onClick={() => setSortByScore(s => s === 'desc' ? 'asc' : 'desc')} style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.07em', color:sortByScore ? (dark ? '#6b9fff' : '#2563eb') : (dark ? '#6b6b75' : '#6b7280'), background:'none', border:'none', cursor:'pointer', padding:0, fontFamily:'inherit' }}>
-                      Score {sortByScore === 'asc' ? '↑' : '↓'}
+                    <button onClick={() => { setSortByScore(s => s === 'desc' ? 'asc' : 'desc'); setCurrentPage(1); }} style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.07em', color:sortByScore ? (dark ? '#6b9fff' : '#2563eb') : (dark ? '#6b6b75' : '#6b7280'), background:'none', border:'none', cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                      Score {sortByScore ? (sortByScore === 'asc' ? '↑' : '↓') : ''}
                     </button>
                   </th>
                   {(['WhatsApp', 'Cidade'] as string[]).map(h => (
@@ -2310,7 +2335,7 @@ function LeadsPage() {
                   ))}
                   <th className={`text-center px-3 py-3 text-xs font-semibold uppercase tracking-wider ${muted}`}>Status</th>
                   <th className={`text-left px-3 py-3`} style={{ whiteSpace:'nowrap' }}>
-                    <button onClick={() => setSortByDate(s => s === 'desc' ? 'asc' : 'desc')} style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.07em', color:dark ? '#6b6b75' : '#6b7280', background:'none', border:'none', cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                    <button onClick={() => { setSortByDate(s => s === 'desc' ? 'asc' : 'desc'); setSortByScore(null); setCurrentPage(1); }} style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.07em', color:!sortByScore ? (dark ? '#6b9fff' : '#2563eb') : (dark ? '#6b6b75' : '#6b7280'), background:'none', border:'none', cursor:'pointer', padding:0, fontFamily:'inherit' }}>
                       Entrada {sortByDate === 'desc' ? '↓' : '↑'}
                     </button>
                   </th>

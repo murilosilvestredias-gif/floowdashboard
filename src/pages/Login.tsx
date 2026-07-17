@@ -146,7 +146,9 @@ export default function LoginPage() {
                 .from('memberships')
                 .select('org_id')
                 .eq('user_id', userId)
-                .single();
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .maybeSingle();
               if (membership?.org_id) {
                 const preset = TERMINOLOGY_PRESETS[modeloNegocio] ?? DEFAULT_TERMINOLOGY;
                 await (supabase as any)

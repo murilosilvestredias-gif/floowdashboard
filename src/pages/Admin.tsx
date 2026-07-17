@@ -9,6 +9,7 @@ import { invalidateSubscriptionCache } from '@/components/ProtectedRoute';
 import { invalidatePlanCache } from '@/hooks/usePlanFeatures';
 
 const ADMIN_EMAIL = 'admin@floow.com';
+const SUPERADMIN_USER_ID = '1d4eee3a-854b-416c-8934-35d1312c4390';
 const EDGE_URL = 'https://obguidmfvfjaekaskgob.functions.supabase.co/criar-org';
 const WEBHOOK_BASE = 'https://obguidmfvfjaekaskgob.functions.supabase.co/receber-lead';
 const ATUALIZAR_USUARIO_URL = 'https://obguidmfvfjaekaskgob.functions.supabase.co/atualizar-usuario';
@@ -322,6 +323,21 @@ export default function AdminPage() {
       if (newOrg?.id) {
         // 3. Atualiza plano e status na org
         await supabase.from('organizations').update({ plano: modalPlano, status: 'ativo', ativo: true }).eq('id', newOrg.id);
+
+        const { data: existingSuperadmin } = await supabase
+          .from('memberships')
+          .select('id')
+          .eq('org_id', newOrg.id)
+          .eq('user_id', SUPERADMIN_USER_ID)
+          .maybeSingle();
+
+        if (existingSuperadmin == null) {
+          await supabase.from('memberships').insert({
+            org_id: newOrg.id,
+            user_id: SUPERADMIN_USER_ID,
+            role: 'superadmin',
+          });
+        }
 
         // 4. Cria webhook Principal automaticamente
         const webhookToken = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
