@@ -3157,8 +3157,52 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
     const texto = String([item.status_facebook,item.status,item.motivo,item.tipo].join(' ')).toUpperCase();
     return ['ACCOUNT','CONTA','DISABLE','BLOQUE','RESTRICT','PAYMENT','PAGAMENTO','PERMISSION'].some(function(term: string) { return texto.includes(term); });
   });
-  const humanizarDiagnostico = (valor: any) => {
+  const humanizarDiagnostico = (key: string, valor: any): string => {
     if (valor == null || valor === false) return '';
+
+    // Qualidade de lead — mostra quais campanhas caíram e percentual
+    if (key === 'qualidade' && typeof valor === 'object') {
+      if (valor.resumo) return String(valor.resumo);
+      const queda: any[] = Array.isArray(valor.campanhas_com_queda) ? valor.campanhas_com_queda : [];
+      const buildLista = (arr: any[]) => arr.map((c: any) => {
+        const nome = c.campanha || c.campanha_nome || c.nome || 'Campanha';
+        const pct = c.percentual_queda ?? c.queda_pct ?? null;
+        return pct != null ? `${nome} (−${pct}%)` : nome;
+      }).join(', ');
+      if (valor.colapso_geral) {
+        return queda.length > 0
+          ? `Queda de qualidade detectada: ${buildLista(queda)}.`
+          : 'Colapso geral de qualidade detectado nas campanhas.';
+      }
+      if (queda.length === 0) return 'Nenhuma queda de qualidade detectada.';
+      return `Queda de qualidade em: ${buildLista(queda)}.`;
+    }
+
+    // Sinais — só exibe o campo "aviso"; campos internos (llm_erro, capi_ativo, etc.) são omitidos
+    if (key === 'sinais' && typeof valor === 'object') {
+      return valor.aviso ? String(valor.aviso) : '';
+    }
+
+    // Dados — exibe memoria_ravena como frase legível
+    if (key === 'dados' && typeof valor === 'object') {
+      const mem = (valor as any).memoria_ravena;
+      if (mem && typeof mem === 'object') {
+        const partes: string[] = [];
+        if (mem.total_analises != null) partes.push(`Essa é a análise número ${mem.total_analises}.`);
+        if (mem.melhor_cpr_historico != null) {
+          const cprFmt = `R$ ${Number(mem.melhor_cpr_historico).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          partes.push(`Melhor CPR já visto: ${cprFmt}${mem.melhor_cpr_campanha ? ` (${mem.melhor_cpr_campanha})` : ''}.`);
+        }
+        if (partes.length > 0) return partes.join(' ');
+      }
+      if (valor.resumo) return String(valor.resumo);
+      const { memoria_ravena: _mr, ...rest } = valor as any;
+      const bruto = JSON.stringify(rest);
+      if (!bruto || bruto === '{}') return '';
+      return bruto.replace(/[{}[\]"]/g, '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    }
+
+    // Fallback genérico — remove artifacts JSON e substitui termos técnicos
     const bruto = typeof valor === 'string' ? valor : JSON.stringify(valor);
     return bruto
       .replace(/guardrail/gi, 'intervalo de seguranca')
@@ -3172,7 +3216,7 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
       .trim();
   };
   const criarDiagnostico = (key: string, titulo: string, valor: any, prioridade: number) => {
-    const texto = humanizarDiagnostico(valor);
+    const texto = humanizarDiagnostico(key, valor);
     if (!texto || texto === '{}' || texto === '[]') return null;
     return { key, titulo, texto, prioridade };
   };
@@ -3707,10 +3751,12 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
                 <div style={{ borderRadius: '16px', background: cardBg, border: `1px solid ${border}`, overflow: 'hidden' }}>
                   <div style={{ padding: '16px', borderBottom: `1px solid ${border}` }}>
                     <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 800, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      Sugestao de campanha
+                      {campanhaMestre.tipo === 'nova_campanha' ? 'Sugestão de campanha nova' : 'Sugestao de campanha'}
                     </p>
                     <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: txtHi, lineHeight: 1.35 }}>
-                      Criar uma nova campanha com o que ja performou melhor
+                      {campanhaMestre.tipo === 'nova_campanha'
+                        ? 'Criar uma campanha nova com público e criativo sugeridos'
+                        : 'Criar uma nova campanha com o que ja performou melhor'}
                     </h3>
                     {campanhaMestre.motivo && (
                       <p style={{ margin: '10px 0 0', fontSize: '13px', color: txtMid, lineHeight: 1.55 }}>
@@ -3719,17 +3765,31 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
                     )}
                   </div>
                   <div style={{ padding: '14px 16px', display: 'grid', gap: '10px' }}>
-                    {[
+                    {(campanhaMestre.tipo === 'nova_campanha' ? [
+                      ['Público', campanhaMestre.publico_sugerido],
+                      ['Criativo', campanhaMestre.criativo_sugerido],
+                      ['Orçamento sugerido', campanhaMestre.budget_diario_sugerido ? `R$ ${campanhaMestre.budget_diario_sugerido}/dia` : null],
+                    ] : [
                       ['Base', campanhaMestre.campanha_base || campanhaMestre.base],
                       ['Publico', campanhaMestre.publico],
                       ['Criativo', campanhaMestre.criativo],
                       ['Orcamento sugerido', campanhaMestre.budget_diario_sugerido ? `R$ ${campanhaMestre.budget_diario_sugerido}/dia` : null],
-                    ].map(([label, value]) => (
+                    ]).map(([label, value]) => (
                       <div key={label} style={{ display: 'grid', gridTemplateColumns: '112px 1fr', gap: '10px', alignItems: 'center' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: txtMid, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
                         <span style={{ fontSize: '13px', fontWeight: 700, color: txtHi, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</span>
                       </div>
                     ))}
+                    {campanhaMestre.tipo === 'nova_campanha' && Array.isArray(campanhaMestre.instrucoes) && campanhaMestre.instrucoes.length > 0 && (
+                      <div style={{ marginTop: '4px', display: 'grid', gap: '6px' }}>
+                        {campanhaMestre.instrucoes.slice(0, 4).map((item: string, i: number) => (
+                          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px', color: txtMid, lineHeight: 1.45 }}>
+                            <span style={{ width: '18px', height: '18px', borderRadius: '50%', background: dark ? 'rgba(255,255,255,0.06)' : '#f3f4f6', color: txtMid, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '10px', fontWeight: 800 }}>{i + 1}</span>
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                       <button onClick={marcarCampanhaCriada} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: '#8b5cf6', color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                         Marcar como criada
@@ -3771,11 +3831,14 @@ function SugestaoCard({ acao, dark, onAplicar, onIgnorar, aplicando }: {
   const isCreative = tipo.includes('criativo');
   const isNovoConjunto = tipo.includes('novo_conjunto') || tipo.includes('novo conjunto');
   const isEstrutura = tipo.includes('estrutura') || tipo.includes('revisar');
+  const isControlarBudgetFds = tipo === 'controlar_budget_fds';
 
-  const color = isReativar ? '#10b981' : isPause ? '#ef4444' : isIncrease ? '#10b981' : isDecrease ? '#f97316' : '#8b5cf6';
-  const headerBg = isReativar ? 'rgba(16,185,129,0.08)' : isPause ? 'rgba(239,68,68,0.08)' : isIncrease ? 'rgba(16,185,129,0.08)' : isDecrease ? 'rgba(249,115,22,0.08)' : 'rgba(139,92,246,0.08)';
-  const headerIcon = isReativar ? '▶' : isPause ? '⏸' : isIncrease ? '↑' : isDecrease ? '↓' : '✦';
-  const headerLabel = isCreative
+  const color = isControlarBudgetFds ? '#3b82f6' : isReativar ? '#10b981' : isPause ? '#ef4444' : isIncrease ? '#10b981' : isDecrease ? '#f97316' : '#8b5cf6';
+  const headerBg = isControlarBudgetFds ? 'rgba(59,130,246,0.08)' : isReativar ? 'rgba(16,185,129,0.08)' : isPause ? 'rgba(239,68,68,0.08)' : isIncrease ? 'rgba(16,185,129,0.08)' : isDecrease ? 'rgba(249,115,22,0.08)' : 'rgba(139,92,246,0.08)';
+  const headerIcon = isControlarBudgetFds ? '📅' : isReativar ? '▶' : isPause ? '⏸' : isIncrease ? '↑' : isDecrease ? '↓' : '✦';
+  const headerLabel = isControlarBudgetFds
+    ? 'Controle de orçamento no fim de semana'
+    : isCreative
     ? 'Subir novos criativos'
     : isNovoConjunto
     ? 'Criar novo conjunto'
@@ -3876,6 +3939,15 @@ function SugestaoCard({ acao, dark, onAplicar, onIgnorar, aplicando }: {
               </button>
             </p>
           )}
+        </div>
+      )}
+
+      {/* Sugestão detalhada para controlar_budget_fds */}
+      {isControlarBudgetFds && (acao as any).sugestao && (
+        <div style={{ padding: '8px 14px 0' }}>
+          <div style={{ padding: '10px 12px', borderRadius: '8px', background: dark ? 'rgba(59,130,246,0.07)' : '#eff6ff', border: '1px solid rgba(59,130,246,0.18)' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: dark ? '#93c5fd' : '#1d4ed8', lineHeight: 1.5 }}>{(acao as any).sugestao}</p>
+          </div>
         </div>
       )}
 
