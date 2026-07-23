@@ -3160,49 +3160,144 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
   const humanizarDiagnostico = (key: string, valor: any): string => {
     if (valor == null || valor === false) return '';
 
-    // Qualidade de lead — mostra quais campanhas caíram e percentual
-    if (key === 'qualidade' && typeof valor === 'object') {
-      if (valor.resumo) return String(valor.resumo);
-      const queda: any[] = Array.isArray(valor.campanhas_com_queda) ? valor.campanhas_com_queda : [];
-      const buildLista = (arr: any[]) => arr.map((c: any) => {
-        const nome = c.campanha || c.campanha_nome || c.nome || 'Campanha';
-        const pct = c.percentual_queda ?? c.queda_pct ?? null;
-        return pct != null ? `${nome} (−${pct}%)` : nome;
-      }).join(', ');
-      if (valor.colapso_geral) {
-        return queda.length > 0
-          ? `Queda de qualidade detectada: ${buildLista(queda)}.`
-          : 'Colapso geral de qualidade detectado nas campanhas.';
-      }
-      if (queda.length === 0) return 'Nenhuma queda de qualidade detectada.';
-      return `Queda de qualidade em: ${buildLista(queda)}.`;
-    }
-
-    // Sinais — só exibe o campo "aviso"; campos internos (llm_erro, capi_ativo, etc.) são omitidos
-    if (key === 'sinais' && typeof valor === 'object') {
-      return valor.aviso ? String(valor.aviso) : '';
-    }
-
-    // Dados — exibe memoria_ravena como frase legível
-    if (key === 'dados' && typeof valor === 'object') {
-      const mem = (valor as any).memoria_ravena;
-      if (mem && typeof mem === 'object') {
-        const partes: string[] = [];
-        if (mem.total_analises != null) partes.push(`Essa é a análise número ${mem.total_analises}.`);
-        if (mem.melhor_cpr_historico != null) {
-          const cprFmt = `R$ ${Number(mem.melhor_cpr_historico).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-          partes.push(`Melhor CPR já visto: ${cprFmt}${mem.melhor_cpr_campanha ? ` (${mem.melhor_cpr_campanha})` : ''}.`);
+    if (key === 'qualidade') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        if (obj.colapso_geral) {
+          const queda = Array.isArray(obj.campanhas_com_queda) ? obj.campanhas_com_queda : [];
+          if (queda.length === 0) {
+            return 'Colapso geral de qualidade detectado nas campanhas.';
+          }
+          const lista = queda.map((c: any) => {
+            const nome = c.campanha || c.campanha_nome || c.nome || 'Campanha';
+            const pct = c.percentual_queda ?? c.queda_pct ?? null;
+            return pct != null ? `${nome} (−${pct}%)` : nome;
+          }).join(', ');
+          return `Queda de qualidade detectada: ${lista}.`;
         }
-        if (partes.length > 0) return partes.join(' ');
+        return 'Nenhuma queda de qualidade detectada essa semana.';
       }
-      if (valor.resumo) return String(valor.resumo);
-      const { memoria_ravena: _mr, ...rest } = valor as any;
-      const bruto = JSON.stringify(rest);
-      if (!bruto || bruto === '{}') return '';
-      return bruto.replace(/[{}[\]"]/g, '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
     }
 
-    // Fallback genérico — remove artifacts JSON e substitui termos técnicos
+    if (key === 'fadiga') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        if (obj.tem_fadiga) {
+          const itens: string[] = [];
+          const processList = (list: any[]) => {
+            if (!Array.isArray(list)) return;
+            list.forEach((item: any) => {
+              if (!item) return;
+              const nome = item.campanha || item.conjunto || item.campanha_nome || item.conjunto_nome || item.nome || 'Item';
+              const freq = item.frequencia_media ?? item.frequencia ?? null;
+              if (freq != null) {
+                itens.push(`${nome} (frequência média: ${freq})`);
+              } else {
+                itens.push(nome);
+              }
+            });
+          };
+          processList(obj.campanhas);
+          processList(obj.conjuntos);
+          processList(obj.campanhas_fatigadas);
+          processList(obj.conjuntos_fatigados);
+          processList(obj.itens);
+          processList(obj.detalhes);
+
+          if (itens.length > 0) {
+            return `Sinais de fadiga detectados em: ${itens.join(', ')}.`;
+          }
+          return 'Sinais de fadiga de criativo detectados.';
+        }
+        return 'Nenhum sinal de fadiga de criativo detectado.';
+      }
+    }
+
+    if (key === 'sinais') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        return obj.aviso ? String(obj.aviso) : '';
+      }
+      return typeof valor === 'string' ? valor : '';
+    }
+
+    if (key === 'ritmo') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        const ritmoProjetado = obj.ritmo_projetado ?? '—';
+        const metaPeriodo = obj.meta_do_periodo ?? '—';
+        const decorridos = obj.dias_uteis_decorridos ?? 0;
+        const noPeriodo = obj.dias_uteis_no_periodo ?? 0;
+        let frase = `Ritmo projetado: ${ritmoProjetado} contra meta de ${metaPeriodo} (${decorridos} de ${noPeriodo} dias úteis decorridos).`;
+        const diasSemOnboarding = obj.dias_sem_onboarding_detectados;
+        if (diasSemOnboarding) {
+          if (Array.isArray(diasSemOnboarding) && diasSemOnboarding.length > 0) {
+            frase += ` (sem contar ${diasSemOnboarding.join(', ')})`;
+          } else if (typeof diasSemOnboarding === 'string' && diasSemOnboarding.trim().length > 0) {
+            frase += ` (sem contar ${diasSemOnboarding})`;
+          }
+        }
+        return frase;
+      }
+    }
+
+    if (key === 'canibalizacao') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        if (obj.tem_canibalizacao) {
+          const conflitos: string[] = [];
+          const list = Array.isArray(obj.conflitos) ? obj.conflitos :
+                       Array.isArray(obj.pares) ? obj.pares :
+                       Array.isArray(obj.pares_conflitantes) ? obj.pares_conflitantes :
+                       Array.isArray(obj.campanhas_conflitantes) ? obj.campanhas_conflitantes : [];
+          list.forEach((item: any) => {
+            if (typeof item === 'string') {
+              conflitos.push(item);
+            } else if (item && typeof item === 'object') {
+              const camp1 = item.campanha1 || item.campanha_a || item.campanha_1 || '';
+              const conj1 = item.conjunto1 || item.conjunto_a || item.conjunto_1 || '';
+              const camp2 = item.campanha2 || item.campanha_b || item.campanha_2 || '';
+              const conj2 = item.conjunto2 || item.conjunto_b || item.conjunto_2 || '';
+              if (camp1 && camp2) {
+                conflitos.push(`${camp1} (${conj1}) vs ${camp2} (${conj2})`);
+              } else if (item.resumo || item.descricao) {
+                conflitos.push(item.resumo || item.descricao);
+              } else {
+                conflitos.push(JSON.stringify(item));
+              }
+            }
+          });
+          if (conflitos.length > 0) {
+            return `Públicos repetidos conflitando em: ${conflitos.join(', ')}.`;
+          }
+          if (obj.resumo) return String(obj.resumo);
+          return 'Conflito de públicos repetidos (canibalização) detectado.';
+        }
+        return '';
+      }
+    }
+
+    if (key === 'dados') {
+      const obj = typeof valor === 'string' ? (() => { try { return JSON.parse(valor); } catch { return null; } })() : valor;
+      if (obj && typeof obj === 'object') {
+        const mem = obj.memoria_ravena;
+        if (mem && typeof mem === 'object') {
+          const partes: string[] = [];
+          if (mem.total_analises != null) partes.push(`Essa é a análise número ${mem.total_analises}.`);
+          if (mem.melhor_cpr_historico != null) {
+            const cprFmt = `R$ ${Number(mem.melhor_cpr_historico).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            partes.push(`Melhor CPR já visto: ${cprFmt}${mem.melhor_cpr_campanha ? ` (${mem.melhor_cpr_campanha})` : ''}.`);
+          }
+          if (partes.length > 0) return partes.join(' ');
+        }
+        if (obj.resumo) return String(obj.resumo);
+        const { memoria_ravena: _mr, ...rest } = obj as any;
+        const bruto = JSON.stringify(rest);
+        if (!bruto || bruto === '{}') return '';
+        return bruto.replace(/[{}[\]"]/g, '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+
     const bruto = typeof valor === 'string' ? valor : JSON.stringify(valor);
     return bruto
       .replace(/guardrail/gi, 'intervalo de seguranca')
@@ -3222,13 +3317,13 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
   };
   const diagnosticosRavena = [
     criarDiagnostico('qualidade', 'Qualidade dos leads', log.diagnostico_qualidade_lead, 3),
-    criarDiagnostico('canibalizacao', 'Publicos repetidos', log.diagnostico_canibalizacao || log['diagnostico_canibalizaÃ§Ã£o'], 4),
+    criarDiagnostico('canibalizacao', 'Publicos repetidos', log.diagnostico_canibalizacao || log['diagnostico_canibalização'] || log['diagnostico_canibalizaÃ§Ã£o'], 4),
     criarDiagnostico('estrutura', 'Estrutura da conta', log.diagnostico_criativo, 4),
     criarDiagnostico('fadiga', 'Fadiga criativa', log.diagnostico_fadiga_criativo, 5),
     criarDiagnostico('sinais', 'Sinal de otimizacao', log.diagnostico_sinais, 6),
     criarDiagnostico('ritmo', 'Ritmo da meta', log.diagnostico_ritmo, 6),
     criarDiagnostico('dados', 'Qualidade dos dados', log.diagnostico_dados, 7),
-  ].filter(Boolean).sort((a: any, b: any) => a.prioridade - b.prioridade).slice(0, 4) as any[];
+  ].filter(Boolean).sort((a: any, b: any) => a.prioridade - b.prioridade).slice(0, 6) as any[];
 
   const nomeCurtoCampanha = (valor: string) => {
     const nome = String(valor || '');
@@ -3364,11 +3459,13 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
       aprovado: !ignorado,
       ignorado,
       nome: ignorado ? 'Sugestão de campanha ignorada' : 'Sugestão de campanha criada',
-      campanha_base: campanhaMestre.campanha_base,
+      campanha_base: campanhaMestre.campanha_base || campanhaMestre.base,
       campanha_base_id: campanhaMestre.campanha_base_id,
-      publico: campanhaMestre.publico,
-      criativo: campanhaMestre.criativo,
+      publico: campanhaMestre.publico_sugerido || campanhaMestre.publico,
+      criativo: campanhaMestre.criativo_sugerido || campanhaMestre.criativo,
       budget_diario_sugerido: campanhaMestre.budget_diario_sugerido,
+      thumbnail_url: campanhaMestre.thumbnail_url,
+      instrucoes: campanhaMestre.instrucoes,
       motivo: campanhaMestre.motivo,
       executado_em: new Date().toISOString(),
     };
@@ -3765,22 +3862,23 @@ function AIOptimizationPanel({ log, dark, isMobile, allLeads, onClose, metaRevs 
                     )}
                   </div>
                   <div style={{ padding: '14px 16px', display: 'grid', gap: '10px' }}>
-                    {(campanhaMestre.tipo === 'nova_campanha' ? [
-                      ['Público', campanhaMestre.publico_sugerido],
-                      ['Criativo', campanhaMestre.criativo_sugerido],
+                    {campanhaMestre.thumbnail_url && (
+                      <div style={{ marginBottom: '4px', borderRadius: '8px', overflow: 'hidden', height: '140px', border: `1px solid ${border}` }}>
+                        <img src={campanhaMestre.thumbnail_url} alt="Thumbnail do criativo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </div>
+                    )}
+                    {([
+                      (campanhaMestre.campanha_base || campanhaMestre.base) ? ['Base', campanhaMestre.campanha_base || campanhaMestre.base] : null,
+                      ['Público', campanhaMestre.publico_sugerido || campanhaMestre.publico],
+                      ['Criativo', campanhaMestre.criativo_sugerido || campanhaMestre.criativo],
                       ['Orçamento sugerido', campanhaMestre.budget_diario_sugerido ? `R$ ${campanhaMestre.budget_diario_sugerido}/dia` : null],
-                    ] : [
-                      ['Base', campanhaMestre.campanha_base || campanhaMestre.base],
-                      ['Publico', campanhaMestre.publico],
-                      ['Criativo', campanhaMestre.criativo],
-                      ['Orcamento sugerido', campanhaMestre.budget_diario_sugerido ? `R$ ${campanhaMestre.budget_diario_sugerido}/dia` : null],
-                    ]).map(([label, value]) => (
+                    ].filter(Boolean) as [string, any][]).map(([label, value]) => (
                       <div key={label} style={{ display: 'grid', gridTemplateColumns: '112px 1fr', gap: '10px', alignItems: 'center' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: txtMid, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
                         <span style={{ fontSize: '13px', fontWeight: 700, color: txtHi, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</span>
                       </div>
                     ))}
-                    {campanhaMestre.tipo === 'nova_campanha' && Array.isArray(campanhaMestre.instrucoes) && campanhaMestre.instrucoes.length > 0 && (
+                    {Array.isArray(campanhaMestre.instrucoes) && campanhaMestre.instrucoes.length > 0 && (
                       <div style={{ marginTop: '4px', display: 'grid', gap: '6px' }}>
                         {campanhaMestre.instrucoes.slice(0, 4).map((item: string, i: number) => (
                           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px', color: txtMid, lineHeight: 1.45 }}>
@@ -3836,23 +3934,25 @@ function SugestaoCard({ acao, dark, onAplicar, onIgnorar, aplicando }: {
   const color = isControlarBudgetFds ? '#3b82f6' : isReativar ? '#10b981' : isPause ? '#ef4444' : isIncrease ? '#10b981' : isDecrease ? '#f97316' : '#8b5cf6';
   const headerBg = isControlarBudgetFds ? 'rgba(59,130,246,0.08)' : isReativar ? 'rgba(16,185,129,0.08)' : isPause ? 'rgba(239,68,68,0.08)' : isIncrease ? 'rgba(16,185,129,0.08)' : isDecrease ? 'rgba(249,115,22,0.08)' : 'rgba(139,92,246,0.08)';
   const headerIcon = isControlarBudgetFds ? '📅' : isReativar ? '▶' : isPause ? '⏸' : isIncrease ? '↑' : isDecrease ? '↓' : '✦';
-  const headerLabel = isControlarBudgetFds
-    ? 'Controle de orçamento no fim de semana'
-    : isCreative
-    ? 'Subir novos criativos'
-    : isNovoConjunto
-    ? 'Criar novo conjunto'
-    : isEstrutura
-    ? 'Revisar estrutura'
-    : isReativar
-    ? 'Reativar grupo de anúncios'
-    : isPause
-      ? (isConjunto ? 'Pausar grupo de anúncios' : 'Pausar campanha')
-      : isIncrease
-        ? (isConjunto ? 'Aumentar orçamento do grupo' : 'Aumentar orçamento da campanha')
-        : isDecrease
-          ? (isConjunto ? 'Reduzir orçamento do grupo' : 'Reduzir orçamento da campanha')
-          : 'Recomendação da Ravena';
+  const headerLabel = acao.origem === 'llm'
+    ? (acao.titulo || 'Recomendação da Ravena')
+    : (isControlarBudgetFds
+      ? 'Controle de orçamento no fim de semana'
+      : isCreative
+      ? 'Subir novos criativos'
+      : isNovoConjunto
+      ? 'Criar novo conjunto'
+      : isEstrutura
+      ? 'Revisar estrutura'
+      : isReativar
+      ? 'Reativar grupo de anúncios'
+      : isPause
+        ? (isConjunto ? 'Pausar grupo de anúncios' : 'Pausar campanha')
+        : isIncrease
+          ? (isConjunto ? 'Aumentar orçamento do grupo' : 'Aumentar orçamento da campanha')
+          : isDecrease
+            ? (isConjunto ? 'Reduzir orçamento do grupo' : 'Reduzir orçamento da campanha')
+            : 'Recomendação da Ravena');
 
   const bdr    = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   const sepClr = dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
