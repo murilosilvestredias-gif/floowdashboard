@@ -335,7 +335,7 @@ export function Sidebar({ leadCount = 0, onMobileClose }: SidebarProps) {
         display: 'flex', flexDirection: 'column',
         background: sideBg,
         borderRight: `1px solid ${sideBdr}`,
-        height: '100vh',
+        height: '100%',
         transition: isMobileDrawer ? 'none' : 'width 0.2s cubic-bezier(0.4,0,0.2,1)',
         overflow: 'hidden',
         zIndex: 40

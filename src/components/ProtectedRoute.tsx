@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { BloqueioAssinatura } from './BloqueioAssinatura';
+import { GlobalWarningBanner } from './GlobalWarningBanner';
 
 const EXEMPT_PATHS = ['/admin'];
 const ADMIN_EMAIL = 'admin@floow.com';
@@ -75,11 +76,13 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/admin" replace />;
   }
 
-  // BloqueioAssinatura cuida do bloqueio por assinatura em todas as rotas protegidas
   return (
-    <>
-      <BloqueioAssinatura />
-      {children}
-    </>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <GlobalWarningBanner />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        <BloqueioAssinatura />
+        {children}
+      </div>
+    </div>
   );
 }

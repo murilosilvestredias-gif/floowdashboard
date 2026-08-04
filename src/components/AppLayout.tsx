@@ -69,7 +69,7 @@ export function AppLayout({ children, leadCount = 0 }: AppLayoutProps) {
   const bg = isDark ? '#090909' : '#f4f4f5';
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: bg, position: 'relative', transition: 'background-color 0.25s ease' }}>
+    <div style={{ display: 'flex', height: 'calc(100vh - var(--banner-height, 0px))', overflow: 'hidden', background: bg, position: 'relative', transition: 'background-color 0.25s ease' }}>
 
       {/* Desktop sidebar */}
       {!isMobile && <Sidebar leadCount={leadCount} />}
@@ -79,7 +79,7 @@ export function AppLayout({ children, leadCount = 0 }: AppLayoutProps) {
         <div
           onClick={() => setMobileOpen(false)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 60,
+            position: 'fixed', top: 'var(--banner-height, 0px)', left: 0, right: 0, bottom: 0, zIndex: 60,
             background: 'rgba(0,0,0,0.45)',
             backdropFilter: 'blur(4px)',
             WebkitBackdropFilter: 'blur(4px)',
@@ -91,7 +91,7 @@ export function AppLayout({ children, leadCount = 0 }: AppLayoutProps) {
       {/* Mobile sidebar drawer */}
       {isMobile && (
         <div style={{
-          position: 'fixed', top: 0, left: 0, bottom: 0,
+          position: 'fixed', top: 'var(--banner-height, 0px)', left: 0, bottom: 0,
           zIndex: 61, width: '260px',
           transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 0.26s cubic-bezier(0.4,0,0.2,1)',
@@ -140,7 +140,7 @@ export function AppLayout({ children, leadCount = 0 }: AppLayoutProps) {
         {/* Mobile top bar */}
         {isMobile && (
           <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, height: '56px',
+            position: 'fixed', top: 'var(--banner-height, 0px)', left: 0, right: 0, height: '56px',
             background: isDark ? '#0f0f11' : '#ffffff',
             borderBottom: `1px solid ${isDark ? '#1e1e22' : 'rgba(0,0,0,0.08)'}`,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',

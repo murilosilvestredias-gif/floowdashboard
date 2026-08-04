@@ -62,7 +62,7 @@ const App = () => (
           <Route path="/quiz/respostas" element={<ProtectedRoute><QuizRespostas /></ProtectedRoute>} />
           <Route path="/origens" element={<ProtectedRoute><OrigenPage /></ProtectedRoute>} />
           <Route path="/assinatura" element={<ProtectedRoute><AssinaturaPage /></ProtectedRoute>} />
-          <Route path="/gestor" element={<GestorPage />} />
+          <Route path="/gestor" element={<ProtectedRoute><GestorPage /></ProtectedRoute>} />
           <Route path="/quiz/:slug" element={<QuizPublico />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

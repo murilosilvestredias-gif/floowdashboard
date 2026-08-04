@@ -295,3 +295,7 @@ main>div {
 [data-sonner-toast][data-type='error']   [data-icon] { color: #ef4444; }
 [data-sonner-toast][data-type='warning'] [data-icon] { color: #f59e0b; }
 [data-sonner-toast][data-type='info']    [data-icon] { color: #3b82f6; }
+
+body {
+  padding-top: var(--banner-height, 0px);
+}
